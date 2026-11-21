@@ -1,2 +1,15 @@
-# S1: wire the Redshift cluster (infra/modules/redshift) into this root module, and expose the
-# outputs that contracts/platform.yaml lists under terraform_outputs.
+# Reference wiring for S1: the Redshift cluster. Output names are fixed by contracts/platform.yaml.
+
+module "warehouse" {
+  source            = "../modules/redshift"
+  subnet_ids        = data.aws_subnets.default.ids
+  availability_zone = var.availability_zone
+}
+
+output "redshift_cluster_id" {
+  value = module.warehouse.cluster_id
+}
+
+output "redshift_database" {
+  value = module.warehouse.database
+}
