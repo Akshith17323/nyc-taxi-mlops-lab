@@ -61,3 +61,8 @@ output "redshift_database" {
   value       = module.redshift.database
 }
 
+output "notebook_name" {
+  description = "SageMaker notebook instance name"
+  value       = var.github_repo != null ? module.notebook[0].name : null
+}
+

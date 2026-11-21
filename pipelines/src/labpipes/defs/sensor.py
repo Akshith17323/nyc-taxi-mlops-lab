@@ -13,8 +13,10 @@ from ..resources import DataBucket
 
 ingest_month = dg.define_asset_job(
     "ingest_month",
-    selection=dg.AssetSelection.assets("trip_files", "raw_trips", "stg_trips", "zone_hour_stats"),
-    description="Ingest a monthly trip file from S3 through raw and staging tables to zone_hour_stats mart.",
+    selection=dg.AssetSelection.assets(
+        "trip_files", "raw_trips", "stg_trips", "zone_hour_stats", "trip_features"
+    ),
+    description="Ingest a monthly trip file from S3 through raw and staging tables to zone_hour_stats mart and trip_features.",
 )
 
 
