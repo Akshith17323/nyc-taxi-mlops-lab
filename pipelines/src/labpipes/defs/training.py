@@ -53,9 +53,9 @@ def _git_sha() -> str:
     description="UNLOAD training window (2024-01..2024-03) and holdout (2024-04) from staging.trip_features and distances to artifact bucket.",
 )
 def training_set(redshift: RedshiftData, artifacts: ArtifactBucket) -> dg.MaterializeResult:
-    train_uri = artifacts.uri(TRAIN_PREFIX)
-    holdout_uri = artifacts.uri(HOLDOUT_PREFIX)
-    dist_uri = artifacts.uri(DIST_PREFIX)
+    train_uri = f"{artifacts.uri(TRAIN_PREFIX)}/"
+    holdout_uri = f"{artifacts.uri(HOLDOUT_PREFIX)}/"
+    dist_uri = f"{artifacts.uri(DIST_PREFIX)}/"
 
     train_sql = (
         f"unload ('select pickup_zone_id, dropoff_zone_id, pickup_hour, pickup_dow, duration_min "
@@ -100,7 +100,7 @@ def trained_model(artifacts: ArtifactBucket, tracking: MlflowTracking) -> dg.Mat
     distances[["pickup_zone_id", "dropoff_zone_id"]] = distances[["pickup_zone_id", "dropoff_zone_id"]].astype("int64")
     distances["est_distance_miles"] = distances["est_distance_miles"].astype("float64")
 
-    model = tripmodel.LightGBMModel().fit(train, distances, num_rounds=300)
+    model = tripmodel.LightGBMModel().fit(train, distances, num_rounds=200)
 
     tracking.client()  # ensures experiment exists and tracking uri is set
     contract = mlflow_contract()
