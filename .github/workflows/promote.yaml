@@ -73,19 +73,23 @@ jobs:
       - name: Verify /predict uses champion
         run: |
           promoted="${{ steps.mlflow.outputs.promoted_version }}"
-          echo "Checking app /predict for champion v$promoted..."
-          resp=$(curl -fsS --retry 10 --retry-all-errors --retry-delay 2 -X POST http://localhost/predict \
-            -H 'Content-Type: application/json' \
-            -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}')
-          echo "Prediction response: $resp"
-          alias=$(jq -r '.model.alias // empty' <<<"$resp")
-          ver=$(jq -r '.model.version // empty' <<<"$resp")
-          if [ "$alias" != "champion" ]; then
-            echo "Expected model alias 'champion', got '$alias'" >&2
-            exit 1
-          fi
-          if [ -n "$promoted" ] && [ "$ver" != "$promoted" ]; then
-            echo "Expected model version '$promoted', got '$ver'" >&2
-            exit 1
-          fi
-          echo "Champion v$ver successfully serving live predictions!"
+          echo "Checking app /predict for champion (target v$promoted)..."
+          for i in $(seq 1 15); do
+            resp=$(curl -fsS -X POST http://localhost/predict \
+              -H 'Content-Type: application/json' \
+              -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}')
+            echo "Attempt $i: $resp"
+            alias=$(jq -r '.model.alias // empty' <<<"$resp")
+            ver=$(jq -r '.model.version // empty' <<<"$resp")
+            if [ "$alias" = "champion" ]; then
+              if [ -n "$promoted" ] && [ "$ver" != "$promoted" ]; then
+                echo "Expected version $promoted, got $ver" >&2
+                exit 1
+              fi
+              echo "Champion v$ver successfully serving live predictions!"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "Timed out waiting for serving-champion to answer with alias 'champion'" >&2
+          exit 1
