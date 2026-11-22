@@ -12,7 +12,26 @@ declare "host" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the host's series: CPU? memory? disk? which network devices?
+		// Drop non-physical/virtual network interfaces
+		rule {
+			source_labels = ["device"]
+			regex         = "(lo|veth.*|br-.*|docker0)"
+			action        = "drop"
+		}
+
+		// Keep only root filesystem mounts
+		rule {
+			source_labels = ["mountpoint"]
+			regex         = "/(sys|proc|dev|etc|run).*"
+			action        = "drop"
+		}
+
+		// Keep essential host node metrics
+		rule {
+			source_labels = ["__name__"]
+			regex         = "node_(cpu_seconds_total|memory_Mem(Total|Available|Free)_bytes|filesystem_(free|size|avail)_bytes|network_(receive|transmit)_bytes_total|load[15]|disk_(read|write)s_completed_total)"
+			action        = "keep"
+		}
 	}
 
 	export "receiver" {
@@ -26,7 +45,25 @@ declare "containers" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the containers' series: which metrics, and which labels change on every deploy?
+		// Drop metrics from unnamed containers (e.g. root cgroups)
+		rule {
+			source_labels = ["name"]
+			regex         = ""
+			action        = "drop"
+		}
+
+		// Drop high-churn labels that change on every blue-green deploy
+		rule {
+			regex  = "(id|image|container_label_.*)"
+			action = "labeldrop"
+		}
+
+		// Keep essential container resource metrics
+		rule {
+			source_labels = ["__name__"]
+			regex         = "container_(cpu_usage_seconds_total|memory_working_set_bytes|network_(receive|transmit)_bytes_total)"
+			action        = "keep"
+		}
 	}
 
 	export "receiver" {
@@ -40,7 +77,12 @@ declare "services" {
 	prometheus.relabel "rules" {
 		forward_to = argument.forward_to.value
 
-		// Your rules for the services' series (contracts/metrics.yaml, Traefik, runtime metrics).
+		// Keep only lab contracts metrics and Traefik service metrics
+		rule {
+			source_labels = ["__name__"]
+			regex         = "(lab_.*|traefik_service_(requests_total|request_duration_seconds_.*))"
+			action        = "keep"
+		}
 	}
 
 	export "receiver" {

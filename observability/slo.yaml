@@ -3,7 +3,13 @@
 # number, and the alert that tells you it's being missed.
 slos:
   - name: predict-availability
-    sli:
-    objective:
-    why:
-    alert:
+    sli: "ratio of 200 responses to total /predict requests: sum(rate(lab_http_requests_total{route=\"/predict\",code=\"200\"}[5m])) / sum(rate(lab_http_requests_total{route=\"/predict\"}[5m]))"
+    objective: "99.5%"
+    why: "Allows 0.5% error budget over rolling windows for blue-green deployments and container reloads without causing customer-visible degradation or false paging."
+    alert: "PredictAvailabilityErrorBudgetBurningFast"
+
+  - name: predict-latency
+    sli: "ratio of /predict requests served within 200ms: sum(rate(lab_http_request_duration_seconds_bucket{route=\"/predict\",le=\"0.2\"}[5m])) / sum(rate(lab_http_request_duration_seconds_count{route=\"/predict\"}[5m]))"
+    objective: "95.0%"
+    why: "LightGBM inference runs in 5-15ms; 200ms covers proxy overhead and burstable CPU variance, ensuring 95% of riders receive immediate quotes."
+    alert: "PredictLatencyErrorBudgetBurning"

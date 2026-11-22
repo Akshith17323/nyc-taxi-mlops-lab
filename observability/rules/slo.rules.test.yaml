@@ -1,0 +1,43 @@
+rule_files:
+  - slo.rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  # Scenario 1: A short 1-minute transient spike does NOT fire the alert
+  - interval: 1m
+    input_series:
+      - series: 'lab_http_requests_total{route="/predict",code="200"}'
+        values: '0+100x30 3000+100x1 3100+100x30'
+      - series: 'lab_predictions_total{source="model"}'
+        values: '0+100x30 3000+0x1 3000+100x30'
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: PredictAvailabilityErrorBudgetBurningFast
+        exp_alerts: []
+      - eval_time: 35m
+        alertname: PredictAvailabilityErrorBudgetBurningFast
+        exp_alerts: []
+
+  # Scenario 2: A sustained outage triggers PredictAvailabilityErrorBudgetBurningFast
+  - interval: 1m
+    input_series:
+      - series: 'lab_http_requests_total{route="/predict",code="200"}'
+        values: '0+100x60 6000+100x15'
+      - series: 'lab_predictions_total{source="model"}'
+        values: '0+100x60 6000+0x15'
+    alert_rule_test:
+      - eval_time: 61m
+        alertname: PredictAvailabilityErrorBudgetBurningFast
+        exp_alerts: []
+      - eval_time: 66m
+        alertname: PredictAvailabilityErrorBudgetBurningFast
+        exp_alerts: []
+      - eval_time: 68m
+        alertname: PredictAvailabilityErrorBudgetBurningFast
+        exp_alerts:
+          - exp_labels:
+              severity: critical
+            exp_annotations:
+              summary: "/predict availability error budget burning fast"
+              description: "Over 7.2% of /predict requests are failing or returning fallback quotes over 1h and 5m windows."

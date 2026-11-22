@@ -72,3 +72,9 @@ module "secret_wiki" {
   name        = "lab/wiki"
   description = "Wiki credentials for RAG"
 }
+
+module "secret_grafana" {
+  source      = "../modules/secret"
+  name        = "lab/grafana"
+  description = "Grafana Cloud Prometheus credentials for Alloy"
+}

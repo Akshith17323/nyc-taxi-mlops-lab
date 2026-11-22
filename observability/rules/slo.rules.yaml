@@ -2,4 +2,56 @@
 # Prometheus rule format: https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/
 # Metric names are contracts/metrics.yaml's. `make check` runs promtool on this file and on any
 # *.test.yaml next to it.
-groups: []
+groups:
+  - name: lab-slo-rules
+    interval: 30s
+    rules:
+      # Availability SLI (objective: 99.5%)
+      - record: lab:predict_availability:ratio_rate5m
+        expr: (sum(rate(lab_predictions_total{source="model"}[5m])) or on() vector(0)) / sum(rate(lab_http_requests_total{route="/predict"}[5m]))
+      - record: lab:predict_availability:burn_rate_5m
+        expr: (1 - lab:predict_availability:ratio_rate5m) / (1 - 0.995)
+
+      - record: lab:predict_availability:ratio_rate1h
+        expr: (sum(rate(lab_predictions_total{source="model"}[1h])) or on() vector(0)) / sum(rate(lab_http_requests_total{route="/predict"}[1h]))
+      - record: lab:predict_availability:burn_rate_1h
+        expr: (1 - lab:predict_availability:ratio_rate1h) / (1 - 0.995)
+
+      # Latency SLI (objective: 95.0% <= 200ms)
+      - record: lab:predict_latency:ratio_rate5m
+        expr: (sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.2"}[5m])) or on() vector(0)) / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[5m]))
+      - record: lab:predict_latency:burn_rate_5m
+        expr: (1 - lab:predict_latency:ratio_rate5m) / (1 - 0.95)
+
+      - record: lab:predict_latency:ratio_rate1h
+        expr: (sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.2"}[1h])) or on() vector(0)) / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[1h]))
+      - record: lab:predict_latency:burn_rate_1h
+        expr: (1 - lab:predict_latency:ratio_rate1h) / (1 - 0.95)
+
+      # Alerts
+      - alert: PredictAvailabilityErrorBudgetBurningFast
+        expr: (lab:predict_availability:burn_rate_5m > 14.4) and on() (lab:predict_availability:burn_rate_1h > 14.4)
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "/predict availability error budget burning fast"
+          description: "Over 7.2% of /predict requests are failing or returning fallback quotes over 1h and 5m windows."
+
+      - alert: PredictAvailabilityErrorBudgetBurningSlow
+        expr: (lab:predict_availability:burn_rate_5m > 6) and on() (lab:predict_availability:burn_rate_1h > 6)
+        for: 15m
+        labels:
+          severity: warning
+        annotations:
+          summary: "/predict availability error budget burning slow"
+          description: "Elevated error/fallback rate on /predict (burn rate > 6x)."
+
+      - alert: PredictLatencyErrorBudgetBurning
+        expr: (lab:predict_latency:burn_rate_5m > 14.4) and on() (lab:predict_latency:burn_rate_1h > 14.4)
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "/predict latency error budget burning"
+          description: "Over 72% of /predict requests taking > 200ms over 1h and 5m windows."
