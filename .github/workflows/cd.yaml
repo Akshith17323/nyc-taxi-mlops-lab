@@ -107,8 +107,8 @@ jobs:
           docker compose -f deploy/compose.web.yaml pull
           docker compose -f deploy/compose.web.yaml up -d --remove-orphans
 
-          echo "Running smoke tests on $idle with target SHA ${SHA::7}..."
-          deploy/web.sh smoke "$idle" "${SHA::7}"
+          echo "Running smoke tests on $idle with target SHA $SHA..."
+          deploy/web.sh smoke "$idle" "$SHA"
 
           echo "Switching live traffic to $idle..."
           start_ts=$(date +%s%N)
