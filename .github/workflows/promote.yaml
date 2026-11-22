@@ -1,0 +1,91 @@
+name: promote
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Model version to promote to champion (default: current challenger)"
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    environment: production
+    runs-on: [self-hosted, lab-app]
+    env:
+      TARGET_VERSION: ${{ inputs.version }}
+    steps:
+      - uses: actions/checkout@v7.0.1
+      - name: Promote version to champion in MLflow
+        id: mlflow
+        run: |
+          docker exec lab-serving-serving-champion-1 python -c '
+          import os, sys
+          from mlflow import MlflowClient
+
+          client = MlflowClient()
+          model_name = "trip-duration"
+          target_version = sys.argv[1].strip() if len(sys.argv) > 1 and sys.argv[1].strip() else None
+
+          if not target_version:
+              try:
+                  challenger = client.get_model_version_by_alias(model_name, "challenger")
+                  target_version = str(challenger.version)
+                  print(f"Resolving challenger alias: target version is v{target_version}")
+              except Exception as e:
+                  print(f"Error resolving challenger alias: {e}", file=sys.stderr)
+                  sys.exit(1)
+
+          mv = client.get_model_version(model_name, target_version)
+          tags = mv.tags or {}
+          print(f"Model v{target_version} tags: {tags}")
+
+          if "mae_min" not in tags or "champion_mae_min" not in tags:
+              print(f"Error: version {target_version} was not evaluated by the pipeline (missing required evaluation tags)", file=sys.stderr)
+              sys.exit(1)
+
+          try:
+              cur = client.get_model_version_by_alias(model_name, "champion")
+              outgoing = str(cur.version)
+          except Exception:
+              outgoing = "none"
+
+          print(f"Promoting model v{target_version} to champion (outgoing champion: {outgoing})")
+          client.set_registered_model_alias(model_name, "champion", str(target_version))
+          gh_out = os.environ.get("GITHUB_OUTPUT")
+          if gh_out:
+              with open(gh_out, "a") as f:
+                  f.write(f"promoted_version={target_version}\n")
+                  f.write(f"outgoing_version={outgoing}\n")
+          ' "$TARGET_VERSION"
+
+      - name: Reload serving container
+        run: |
+          echo "Reloading serving-champion container..."
+          deploy/web.sh reload champion
+
+      - name: Verify /predict uses champion
+        run: |
+          promoted="${{ steps.mlflow.outputs.promoted_version }}"
+          echo "Checking app /predict for champion v$promoted..."
+          resp=$(curl -fsS --retry 10 --retry-all-errors --retry-delay 2 -X POST http://localhost/predict \
+            -H 'Content-Type: application/json' \
+            -d '{"pickup_zone_id": 132, "dropoff_zone_id": 230, "pickup_datetime": "2024-03-08T17:05:00"}')
+          echo "Prediction response: $resp"
+          alias=$(jq -r '.model.alias // empty' <<<"$resp")
+          ver=$(jq -r '.model.version // empty' <<<"$resp")
+          if [ "$alias" != "champion" ]; then
+            echo "Expected model alias 'champion', got '$alias'" >&2
+            exit 1
+          fi
+          if [ -n "$promoted" ] && [ "$ver" != "$promoted" ]; then
+            echo "Expected model version '$promoted', got '$ver'" >&2
+            exit 1
+          fi
+          echo "Champion v$ver successfully serving live predictions!"
