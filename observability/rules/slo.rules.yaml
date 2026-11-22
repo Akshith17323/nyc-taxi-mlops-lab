@@ -1,5 +1,52 @@
 # SLO recording and alerting rules (S5, decision 013), evaluated by your Grafana Cloud stack's ruler.
-# Prometheus rule format: https://prometheus.io/docs/prometheus/latest/configuration/recording_rules/
-# Metric names are contracts/metrics.yaml's. `make check` runs promtool on this file and on any
-# *.test.yaml next to it.
-groups: []
+# observability/slo.yaml says what each SLO means; this is how it's computed. Metric names are
+# contracts/metrics.yaml's. Pushed by .github/workflows/observability.yaml; tested by `make check`.
+#
+# Burn rate = how fast the error budget is spent: 1 means exactly on budget for the whole window.
+# Paging needs both a long and a short window over the threshold, so a spike that's already over
+# doesn't page, and a real outage pages within minutes.
+groups:
+  - name: slo-predict
+    interval: 30s
+    rules:
+      # Availability: /predict answered without a 5xx (objective 99.5%).
+      - record: slo:predict_errors:ratio_rate5m
+        expr: sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[5m])) / sum(rate(lab_http_requests_total{route="/predict"}[5m]))
+      - record: slo:predict_errors:ratio_rate1h
+        expr: sum(rate(lab_http_requests_total{route="/predict",code=~"5.."}[1h])) / sum(rate(lab_http_requests_total{route="/predict"}[1h]))
+      # Latency: /predict answered within 250 ms inside the app (objective 99%).
+      - record: slo:predict_slow:ratio_rate5m
+        expr: 1 - sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.25"}[5m])) / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[5m]))
+      - record: slo:predict_slow:ratio_rate1h
+        expr: 1 - sum(rate(lab_http_request_duration_seconds_bucket{route="/predict",le="0.25"}[1h])) / sum(rate(lab_http_request_duration_seconds_count{route="/predict"}[1h]))
+      # Quality: quotes that came from the model, not the static-median fallback (objective 99%).
+      - record: slo:predict_fallback:ratio_rate5m
+        expr: sum(rate(lab_predictions_total{source="fallback"}[5m])) / sum(rate(lab_predictions_total[5m]))
+      - record: slo:predict_fallback:ratio_rate1h
+        expr: sum(rate(lab_predictions_total{source="fallback"}[1h])) / sum(rate(lab_predictions_total[1h]))
+
+  - name: slo-alerts
+    rules:
+      # 14.4x burn over 1 h spends 2% of a 30-day budget in that hour: page. In a 9-hour lab day it
+      # means "riders are being failed right now".
+      - alert: PredictErrorsFastBurn
+        expr: slo:predict_errors:ratio_rate1h > 14.4 * 0.005 and slo:predict_errors:ratio_rate5m > 14.4 * 0.005
+        labels: {severity: page, slo: predict-availability}
+        annotations:
+          summary: "/predict errors are spending the availability budget over 14x too fast"
+      - alert: PredictLatencyFastBurn
+        expr: slo:predict_slow:ratio_rate1h > 14.4 * 0.01 and slo:predict_slow:ratio_rate5m > 14.4 * 0.01
+        labels: {severity: page, slo: predict-latency}
+        annotations:
+          summary: "/predict latency over 250 ms is spending the budget over 14x too fast"
+      - alert: QuotesFromFallback
+        expr: slo:predict_fallback:ratio_rate1h > 14.4 * 0.01 and slo:predict_fallback:ratio_rate5m > 14.4 * 0.01
+        labels: {severity: page, slo: predict-model}
+        annotations:
+          summary: "Quotes are coming from the static median: is serving answering?"
+      # Not an SLO: the telemetry itself. No samples from a host means every other alert is blind.
+      - alert: HostSilent
+        expr: absent_over_time(up{job="integrations/unix"}[10m])
+        labels: {severity: ticket}
+        annotations:
+          summary: "No host metrics for 10 minutes: is Alloy running?"

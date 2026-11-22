@@ -65,4 +65,9 @@ module "wiki_secret" {
   description = "Ops wiki URL and this student's token: {\"url\": ..., \"token\": ...}"
 }
 
+module "grafana_secret" {
+  source      = "../modules/secret"
+  name        = "lab/grafana"
+  description = "Grafana Cloud remote write: {\"url\": \".../api/prom/push\", \"user\": ..., \"token\": ...}"
+}
 

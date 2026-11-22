@@ -1,9 +1,23 @@
-# Service level objectives for the ride app (S5, decision 013). rules/slo.rules.yaml computes them.
-# One entry per SLO: what's measured (the SLI, from contracts/metrics.yaml), the objective, why that
-# number, and the alert that tells you it's being missed.
+# Service level objectives for the ride app (S5, decision 013). rules/slo.rules.yaml computes them;
+# Grafana Cloud evaluates the rules and fires the alerts.
+#
+# Window: one lab day (9 h). Burn-rate alerts use 30-day maths (14.4x over 1 h and 5 min), which on
+# a 9-hour day means "act now", and they stay correct if the system outlives the lab.
 slos:
   - name: predict-availability
-    sli:
-    objective:
-    why:
-    alert:
+    sli: share of POST /predict the app answered without a 5xx (lab_http_requests_total)
+    objective: 99.5%
+    why: a rider who gets an error gets no quote at all; 0.5% is about 1 in 200 quotes.
+    alert: PredictErrorsFastBurn
+
+  - name: predict-latency
+    sli: share of POST /predict answered within 250 ms, measured inside the app (lab_http_request_duration_seconds)
+    objective: 99%
+    why: the app gives serving 300 ms before falling back, so 250 ms leaves headroom; riders feel more than ~0.5 s.
+    alert: PredictLatencyFastBurn
+
+  - name: predict-model
+    sli: share of quotes from the model rather than the static-median fallback (lab_predictions_total)
+    objective: 99%
+    why: the fallback answers 200 with a worse number, so availability alone can't see it.
+    alert: QuotesFromFallback

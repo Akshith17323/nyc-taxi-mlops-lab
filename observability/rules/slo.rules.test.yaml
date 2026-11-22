@@ -1,0 +1,52 @@
+# promtool unit tests for slo.rules.yaml (make check runs them): each alert fires on a real outage and
+# stays quiet on a short spike.
+rule_files:
+  - slo.rules.yaml
+evaluation_interval: 30s
+tests:
+  - name: an outage pages, a spike doesn't
+    interval: 30s
+    input_series:
+      # 10 req/s; from minute 60 on, 20% fail.
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="200"}'
+        values: '0+300x120 36000+240x60'
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="500"}'
+        values: '0+0x120 0+60x60'
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: PredictErrorsFastBurn
+        exp_alerts: []
+      - eval_time: 90m
+        alertname: PredictErrorsFastBurn
+        exp_alerts:
+          - exp_labels: {severity: page, slo: predict-availability}
+            exp_annotations:
+              summary: "/predict errors are spending the availability budget over 14x too fast"
+  - name: a two-minute spike of errors doesn't page
+    interval: 30s
+    input_series:
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="200"}'
+        values: '0+300x120'
+      - series: 'lab_http_requests_total{route="/predict",method="POST",code="500"}'
+        values: '0+0x60 0+300x4 1200+0x56'
+    alert_rule_test:
+      - eval_time: 33m
+        alertname: PredictErrorsFastBurn
+        exp_alerts: []
+  - name: fallback quotes page when serving is down
+    interval: 30s
+    input_series:
+      - series: 'lab_predictions_total{source="model",alias="champion",version="3"}'
+        values: '0+300x60 18000+0x60'
+      - series: 'lab_predictions_total{source="fallback",alias="",version=""}'
+        values: '0+0x60 0+300x60'
+    alert_rule_test:
+      - eval_time: 29m
+        alertname: QuotesFromFallback
+        exp_alerts: []
+      - eval_time: 50m
+        alertname: QuotesFromFallback
+        exp_alerts:
+          - exp_labels: {severity: page, slo: predict-model}
+            exp_annotations:
+              summary: "Quotes are coming from the static median: is serving answering?"
