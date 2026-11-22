@@ -78,3 +78,9 @@ module "secret_grafana" {
   name        = "lab/grafana"
   description = "Grafana Cloud Prometheus credentials for Alloy"
 }
+
+module "secret_langfuse" {
+  source      = "../modules/secret"
+  name        = "lab/langfuse"
+  description = "Langfuse tracing credentials for assistant"
+}
