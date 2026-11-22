@@ -24,4 +24,9 @@ output "artifact_bucket" {
   value = module.artifacts.name
 }
 
+# Serving on the app host finds MLflow here (repo variable MLFLOW_TRACKING_URI, stages/S3.md).
+# A private IP survives stop and start, so it stays valid across sessions.
+output "platform_private_ip" {
+  value = module.platform.private_ip
+}
 

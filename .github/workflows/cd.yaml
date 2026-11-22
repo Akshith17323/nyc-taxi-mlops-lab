@@ -16,6 +16,10 @@ on:
       tag:
         description: Image tag to deploy, e.g. to roll back (default sha-<first 7 of the commit>)
         required: false
+      rollback:
+        description: Send traffic back to the other colour, which still runs the previous version (nothing is deployed)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -45,20 +49,32 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Deploy
+      # Blue-green (decision 011): deploy to the idle colour, check it through Traefik, then switch.
+      # The previous colour keeps running, so a rollback is a switch back (workflow_dispatch, rollback).
+      - name: Blue-green deploy
+        if: ${{ !inputs.rollback }}
         run: |
           export IMAGE_PREFIX="ghcr.io/${GITHUB_REPOSITORY,,}"
-          export IMAGE_TAG="${TAG:-sha-${SHA::7}}"
-          docker compose -f deploy/compose.app.yaml pull
-          docker compose -f deploy/compose.app.yaml up -d --wait --remove-orphans
-      - name: Smoke test
+          tag="${TAG:-sha-${SHA::7}}"
+          deploy/web.sh prepare
+          live=$(deploy/web.sh live)
+          idle=$([ "$live" = blue ] && echo green || echo blue)
+          BLUE_TAG=$(deploy/web.sh tag blue) GREEN_TAG=$(deploy/web.sh tag green)
+          if [ "$idle" = blue ]; then BLUE_TAG=$tag; else GREEN_TAG=$tag; fi
+          export BLUE_TAG GREEN_TAG
+          docker compose -f deploy/compose.web.yaml pull "app-$idle"
+          docker compose -f deploy/compose.web.yaml up -d --wait --no-deps --remove-orphans "app-$idle"
+          # Switch only when the new colour answers through Traefik with the commit we built (or the tag
+          # asked for) and /predict works. Otherwise traffic stays where it is and the job fails.
+          if [ -n "$TAG" ]; then deploy/web.sh smoke "$idle"; else deploy/web.sh smoke "$idle" "$SHA"; fi
+          deploy/web.sh switch "$idle"
+          echo "### live: $idle ($tag); $live still runs $(deploy/web.sh tag "$live") for rollback" >> "$GITHUB_STEP_SUMMARY"
+      - name: Roll back to the other colour
+        if: ${{ inputs.rollback }}
         run: |
-          # Traefik answers 404 for a moment after it first starts, until its file provider loads the
-          # route; --retry alone doesn't retry a 404.
-          curl -fsS --retry 10 --retry-all-errors --retry-delay 2 http://localhost/version | tee /tmp/version.json
-          echo
-          if [ -n "$TAG" ]; then
-            jq -e --arg t "$TAG" '.image_tag == $t' /tmp/version.json
-          else
-            jq -e --arg sha "$SHA" '.git_sha == $sha' /tmp/version.json
-          fi
+          live=$(deploy/web.sh live)
+          other=$([ "$live" = blue ] && echo green || echo blue)
+          [ "$(deploy/web.sh tag "$other")" != none ] || { echo "nothing to roll back to: $other isn't running" >&2; exit 1; }
+          deploy/web.sh smoke "$other"
+          deploy/web.sh switch "$other"
+          echo "### rolled back: live $other ($(deploy/web.sh tag "$other"))" >> "$GITHUB_STEP_SUMMARY"
