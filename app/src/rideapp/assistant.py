@@ -114,12 +114,39 @@ async def connect() -> psycopg.AsyncConnection:
                                                  password=s["password"], dbname="rag", autocommit=True, connect_timeout=5)
 
 
-TOP_K = 0  # decision 015
+TOP_K = 3  # decision 015
 
 
 async def retrieve(question_vector: list[float]) -> list[Chunk]:
     """S6: the chunks closest to the question from rag.chunks (pgvector), best first. Until then: none."""
-    return []
+    if TOP_K <= 0:
+        return []
+    vec_str = vector_literal(question_vector)
+    async with await connect() as conn:
+        async with conn.cursor() as cur:
+            await cur.execute(
+                """
+                SELECT c.chunk_id, c.page_id, p.title, c.text,
+                       1 - (c.embedding <=> %s::vector) AS score
+                FROM chunks c
+                JOIN pages p ON c.page_id = p.page_id
+                WHERE c.embedding IS NOT NULL
+                ORDER BY c.embedding <=> %s::vector ASC
+                LIMIT %s
+                """,
+                (vec_str, vec_str, TOP_K),
+            )
+            rows = await cur.fetchall()
+            return [
+                Chunk(
+                    id=row[0],
+                    page_id=row[1],
+                    title=row[2],
+                    content=row[3],
+                    score=float(row[4]),
+                )
+                for row in rows
+            ]
 
 
 SYSTEM_PROMPT = "You are the support assistant of a New York ride-hailing app."
@@ -127,7 +154,15 @@ SYSTEM_PROMPT = "You are the support assistant of a New York ride-hailing app."
 
 def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
     """S6: the prompt. Until then the model answers from what it already knows (nothing about our wiki)."""
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+    if not chunks:
+        return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+
+    context_parts = []
+    for i, c in enumerate(chunks, 1):
+        context_parts.append(f"[{i}] {c.title}\n{c.content}")
+    context = "\n\n".join(context_parts)
+    user_content = f"Context from the ops wiki:\n\n{context}\n\nQuestion: {question}"
+    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": user_content}]
 
 
 ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call
