@@ -30,3 +30,6 @@ output "platform_private_ip" {
   value = module.platform.private_ip
 }
 
+output "llm_private_ip" {
+  value = module.llm.private_ip
+}

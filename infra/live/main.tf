@@ -71,3 +71,8 @@ module "grafana_secret" {
   description = "Grafana Cloud remote write: {\"url\": \".../api/prom/push\", \"user\": ..., \"token\": ...}"
 }
 
+module "langfuse_secret" {
+  source      = "../modules/secret"
+  name        = "lab/langfuse"
+  description = "Langfuse Cloud project keys for the assistant's traces: {\"host\": ..., \"public_key\": ..., \"secret_key\": ...}"
+}

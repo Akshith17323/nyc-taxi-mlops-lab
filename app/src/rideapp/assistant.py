@@ -114,20 +114,37 @@ async def connect() -> psycopg.AsyncConnection:
                                                  password=s["password"], dbname="rag", autocommit=True, connect_timeout=5)
 
 
-TOP_K = 0  # decision 015
+# Decision 015: three chunks. On the wiki's 20 Q/A pairs, the answer's page is in the top 3 for all 20
+# (top 1: 16), and each extra chunk costs ~11 s of prompt processing on the LLM host.
+TOP_K = 3
 
 
 async def retrieve(question_vector: list[float]) -> list[Chunk]:
-    """S6: the chunks closest to the question from rag.chunks (pgvector), best first. Until then: none."""
-    return []
+    """The TOP_K chunks closest to the question, by cosine distance (the HNSW index's operator class)."""
+    async with await connect() as conn, conn.cursor() as cur:
+        await cur.execute(
+            """select c.id, c.page_id, p.title, c.content, 1 - (c.embedding <=> %(q)s::vector) as score
+               from rag.chunks c join rag.pages p on p.id = c.page_id
+               where c.embedding is not null
+               order by c.embedding <=> %(q)s::vector
+               limit %(k)s""",
+            {"q": vector_literal(question_vector), "k": TOP_K})
+        return [Chunk(id=r[0], page_id=r[1], title=r[2], content=r[3], score=float(r[4])) for r in await cur.fetchall()]
 
 
-SYSTEM_PROMPT = "You are the support assistant of a New York ride-hailing app."
+SYSTEM_PROMPT = """You are the support assistant of a New York ride-hailing app. Riders ask about trip times, \
+fares, surcharges and pickup rules.
+
+For company policy (amounts, codes, times, rules), rely only on the wiki excerpts in the rider's message; \
+if they don't cover it, say you don't know rather than guess. Quote amounts and codes exactly as written. \
+Answer in at most three sentences."""
 
 
 def build_messages(question: str, chunks: list[Chunk]) -> list[dict]:
-    """S6: the prompt. Until then the model answers from what it already knows (nothing about our wiki)."""
-    return [{"role": "system", "content": SYSTEM_PROMPT}, {"role": "user", "content": question}]
+    # The system prompt never changes, so llama.cpp keeps it cached; the excerpts go in the user turn.
+    context = "\n\n".join(f"[{i + 1}] {c.content}" for i, c in enumerate(chunks)) or "(no excerpts found)"
+    return [{"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": f"Wiki excerpts:\n\n{context}\n\nRider's question: {question}"}]
 
 
 ALLOWED_TOOLS: set[str] = set()  # S7: which of the MCP server's tools the assistant may call

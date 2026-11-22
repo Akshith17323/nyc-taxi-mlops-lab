@@ -60,3 +60,12 @@ resource "aws_vpc_security_group_egress_rule" "hosts" {
   ip_protocol       = "-1"
 }
 
+# The assistant on the app host embeds riders' questions (S6).
+resource "aws_vpc_security_group_ingress_rule" "llm_embed_from_app" {
+  security_group_id            = local.sg.llm
+  referenced_security_group_id = local.sg.app
+  from_port                    = 8081
+  to_port                      = 8081
+  ip_protocol                  = "tcp"
+  description                  = "llm_embed_from_app"
+}
