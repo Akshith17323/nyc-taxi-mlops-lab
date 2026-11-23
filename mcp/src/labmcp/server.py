@@ -104,12 +104,28 @@ Metric = Literal["trip_count", "median_duration_min", "p90_duration_min"]
 
 @mcp.tool(description="Predict the duration in minutes of a yellow-taxi trip between two NYC TLC taxi zones, using the champion model.")
 async def predict_duration(pickup_zone: Zone, dropoff_zone: Zone, hour: Hour, day_of_week: Day) -> dict:
-    raise NotImplementedError("S7: predict_duration isn't built yet")
+    body = {"pickup_zone_id": zone_id(pickup_zone), "dropoff_zone_id": zone_id(dropoff_zone), "pickup_hour": hour,
+            "pickup_dow": DAYS.index(day_of_week)}
+    r = await champion("POST", "/predict", body)
+    return {"duration_minutes": r["duration_minutes"], "model_version": r["model"]["version"],
+            "pickup_zone": pickup_zone, "dropoff_zone": dropoff_zone, "hour": hour, "day_of_week": day_of_week}
 
 
 @mcp.tool(description="Historical trip statistics for one pickup zone from the zone_hour_stats mart.")
 def query_zone_stats(zone: Zone, metric: Metric, hour: Annotated[int | None, Field(ge=0, le=23, description="Optional: restrict to one pickup hour.")] = None) -> dict:
-    raise NotImplementedError("S7: query_zone_stats isn't built yet")
+    zone_id(zone)  # an unknown zone is an error the model can act on, not an empty result
+    if metric not in METRICS:  # the column name can't be a parameter: allow-list it
+        raise ValueError(f"metric must be one of {METRICS}")
+    sql = f"select pickup_hour, {metric} as value, first_month, last_month from marts.zone_hour_stats where lower(zone) = lower(:zone)"
+    params: dict[str, object] = {"zone": zone}
+    if hour is not None:
+        sql += " and pickup_hour = :hour"
+        params["hour"] = hour
+    rows = Warehouse().query(sql + " order by pickup_hour", params)
+    if not rows:
+        raise ValueError(f"no statistics for {zone!r}" + (f" at hour {hour}" if hour is not None else ""))
+    return {"zone": zone, "metric": metric, "months": f"{rows[0]['first_month']}..{rows[0]['last_month']}",
+            "by_hour": {int(r["pickup_hour"]): r["value"] for r in rows}}
 
 
 @mcp.custom_route("/healthz", methods=["GET"])
