@@ -40,11 +40,22 @@ requests() { # ALIAS WINDOW: requests served by that alias
 gt() { awk -v a="$1" -v b="$2" 'BEGIN { exit !(a != "NaN" && b != "NaN" && a + 0 > b + 0) }'; }
 round() { awk -v v="$1" 'BEGIN { if (v == "NaN") print v; else printf "%.1f", v }'; } # for messages
 
-STEPS=()          # S8: the challenger's share of serving traffic at each step, in percent (decision 020)
-HOLD_SECONDS=0    # S8: how long each step holds before it's judged
-WINDOW=2m         # the rate window the queries use
+# Decision 020: 10 -> 25 -> 50 -> 100% of serving traffic, 4 minutes each (one minute of Grafana lag plus
+# a 2-minute rate window with fresh samples, plus margin). At 5 requests/s, 10% is ~60 challenger
+# requests per window: enough for a p95, not for a rare error, so errors abort on any 5xx share over 1%.
+STEPS=(10 25 50 100)
+HOLD_SECONDS=240
+WINDOW=2m
 
-should_abort() {  # STEP%: print why and return 0 to abort, return 1 to go on (decision 020; see CHAMPION_BASELINE_MS)
+should_abort() { # STEP%: print why and return 0 to abort, return 1 to go on
+  local cp95 hp95 cerr
+  cp95=$(p95_ms challenger "$WINDOW") hp95=$(p95_ms champion "$WINDOW") cerr=$(error_ratio challenger "$WINDOW")
+  [[ $hp95 == NaN ]] && hp95=$CHAMPION_BASELINE_MS # at 100% the champion serves nothing
+  if gt "$cerr" 0.01; then echo "challenger 5xx ratio $cerr over 1%"; return 0; fi
+  # Relative and absolute: 1.5x the champion's p95 is a regression even when both are fast; 50 ms is the
+  # offline gate's budget, so being over it in production means the gate's measurement was wrong.
+  if gt "$cp95" "$(awk -v h="$hp95" 'BEGIN { print h * 1.5 }')"; then echo "challenger p95 $(round "$cp95") ms is over 1.5x the champion's $(round "$hp95") ms"; return 0; fi
+  if gt "$cp95" 50; then echo "challenger p95 $(round "$cp95") ms is over the 50 ms budget"; return 0; fi
   return 1
 }
 

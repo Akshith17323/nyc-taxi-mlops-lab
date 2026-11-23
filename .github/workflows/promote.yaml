@@ -58,6 +58,10 @@ jobs:
         run: |
           deploy/web.sh reload champion | tee /tmp/reload.json
           jq -e --arg v "$VERSION" '.version == $v' /tmp/reload.json >/dev/null
+      - name: Traffic back to the champion
+        # After a canary that held, serving-challenger takes all traffic; the promoted version now answers
+        # as champion, so the weights go back to the champion.
+        run: deploy/web.sh serving-weights 100 0
       - name: Smoke test
         run: |
           r=$(curl -fsS http://localhost/predict -H 'Content-Type: application/json' \

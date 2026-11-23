@@ -160,3 +160,15 @@ def challenger(context: dg.AssetExecutionContext, tracking: MlflowTracking) -> d
 
 train_model = dg.define_asset_job("train_model", selection=dg.AssetSelection.assets(training_set, trained_model, eval_report, challenger))
 
+# Gameday E4b: retrain when a month drifts past the threshold (drift.py), once per drift report. Whether
+# the new model then becomes champion is still a person's call (promote.yaml); this only proposes one.
+@dg.asset_sensor(asset_key=dg.AssetKey("drift_report"), job=train_model, default_status=dg.DefaultSensorStatus.RUNNING)
+def retrain_on_drift(context: dg.SensorEvaluationContext, asset_event: dg.EventLogEntry):
+    from .drift import DRIFT_THRESHOLD
+
+    mat = asset_event.asset_materialization
+    worst = mat.metadata["max_psi"].value if mat and "max_psi" in mat.metadata else 0.0
+    partition = asset_event.dagster_event.partition if asset_event.dagster_event else None
+    if worst <= DRIFT_THRESHOLD:
+        return dg.SkipReason(f"{partition}: largest PSI {worst} is within {DRIFT_THRESHOLD}")
+    return dg.RunRequest(run_key=f"retrain:{partition}:{asset_event.run_id}:{asset_event.timestamp}", tags={"lab/reason": f"drift {worst} in {partition}"})
